@@ -1,13 +1,14 @@
 // modules/services/subscription_service.bal
 
-import ballerina/uuid;
-import ballerina/time;
-import ballerina/log;
 import ballerina/http;
-import ballerinax/health.fhir.r4;
-import ballerinax/health.fhir.r4.international401;
+import ballerina/log;
+import ballerina/time;
+import ballerina/uuid;
+import ballerinax/health.fhir.r4.davincipas;
+
 import wso2/pas_payer_backend.models;
 import wso2/pas_payer_backend.repository;
+import wso2/pas_payer_backend.utils;
 
 # Subscription Management Service
 public class SubscriptionService {
@@ -19,13 +20,13 @@ public class SubscriptionService {
 
     # Create new subscription
     #
-    # + subscription - Subscription resource
+    # + subscription - PASSubscription resource
     # + return - Created subscription or error
-    public function createSubscription(international401:Subscription subscription)
-            returns international401:Subscription|error {
+    public function createSubscription(davincipas:PASSubscription subscription)
+            returns davincipas:PASSubscription|error {
 
-        // Extract organization ID from filter criteria extension
-        string organizationId = check self.extractOrganizationId(subscription);
+        // Extract organization ID from extensions
+        string organizationId = check utils:extractOrganizationId(subscription);
 
         // Get endpoint from channel
         string endpoint = subscription.channel.endpoint ?: "";
@@ -47,136 +48,48 @@ public class SubscriptionService {
         // Generate subscription ID
         string subscriptionId = uuid:createType1AsString();
 
-        // Extract payload type from channel extension
-        string payloadType = self.extractPayloadType(subscription);
+        // Create PASSubscription with generated ID
+        davincipas:PASSubscription pasSubscription = subscription.clone();
+        pasSubscription.id = subscriptionId;
+        pasSubscription.status = davincipas:CODE_STATUS_REQUESTED;
 
-        // Extract auth header
-        string? authHeader = self.extractAuthHeader(subscription);
-
-        // Parse end datetime
-        time:Utc? endDateTime = ();
-        if subscription.end is r4:instant {
-            endDateTime = check time:utcFromString(<string>subscription.end);
-        }
-
-        // Create subscription record
-        models:SubscriptionRecord subRecord = {
-            id: subscriptionId,
-            organization_id: organizationId,
-            status: "requested",
-            endpoint: endpoint,
-            auth_header: authHeader,
-            payload_type: payloadType,
-            created_at: time:utcNow(),
-            end_datetime: endDateTime,
-            failure_count: 0
-        };
-
-        // Store in database
-        _ = check self.subscriptionRepo.createSubscription(subRecord);
+        // Store in Azure FHIR
+        _ = check self.subscriptionRepo.createSubscription(pasSubscription);
 
         // Send handshake
-        boolean handshakeSuccess = check self.sendHandshake(subscriptionId, subRecord);
+        boolean handshakeSuccess = check self.sendHandshake(subscriptionId, pasSubscription);
 
-        // Clone the subscription to make it mutable for updates
-        international401:Subscription result = subscription.clone();
+        davincipas:PASSubscriptionStatus finalStatus = handshakeSuccess
+            ? davincipas:CODE_STATUS_ACTIVE
+            : davincipas:CODE_STATUS_ERROR;
 
-        if handshakeSuccess {
-            check self.subscriptionRepo.updateStatus(subscriptionId, "active");
-            result.status = international401:CODE_STATUS_ACTIVE;
-        } else {
-            check self.subscriptionRepo.updateStatus(subscriptionId, "error");
-            result.status = international401:CODE_STATUS_ERROR;
-        }
+        check self.subscriptionRepo.updateStatus(subscriptionId, finalStatus);
 
-        result.id = subscriptionId;
-        result.meta = {
+        pasSubscription.status = finalStatus;
+        pasSubscription.meta = {
             versionId: "1",
             lastUpdated: time:utcToString(time:utcNow())
         };
 
-        return result;
-    }
-
-    # Extract organization ID from subscription extension
-    #
-    # + subscription - Subscription resource
-    # + return - Organization ID or error
-    private function extractOrganizationId(international401:Subscription subscription)
-            returns string|error {
-
-        r4:Extension[]? extensions = subscription.extension;
-        if extensions is () {
-            return error("Filter criteria extension is required");
-        }
-
-        foreach r4:Extension ext in extensions {
-            if ext.url.includes("backport-filter-criteria") && ext is r4:StringExtension {
-                string? valueStr = ext.valueString;
-                if valueStr is string {
-                    string[] parts = re `=`.split(valueStr);
-                    if parts.length() == 2 && parts[0] == "org-identifier" {
-                        return parts[1];
-                    }
-                }
-            }
-        }
-
-        return error("org-identifier filter not found");
-    }
-
-    # Extract payload type from channel extension
-    #
-    # + subscription - Subscription resource
-    # + return - Payload type
-    private function extractPayloadType(international401:Subscription subscription)
-            returns string {
-
-        r4:Extension[]? channelExtensions = subscription.channel.extension;
-        if channelExtensions is r4:Extension[] {
-            foreach r4:Extension ext in channelExtensions {
-                if ext.url.includes("backport-payload-content") && ext is r4:CodeExtension {
-                    r4:code? valueCode = ext.valueCode;
-                    if valueCode is r4:code {
-                        return valueCode;
-                    }
-                }
-            }
-        }
-
-        return "empty";
-    }
-
-    # Extract authorization header
-    #
-    # + subscription - Subscription resource
-    # + return - Auth header or null
-    private function extractAuthHeader(international401:Subscription subscription)
-            returns string? {
-
-        string[]? headers = subscription.channel.header;
-        if headers is string[] {
-            foreach string header in headers {
-                if header.startsWith("Authorization:") {
-                    return header;
-                }
-            }
-        }
-
-        return ();
+        return pasSubscription;
     }
 
     # Send handshake notification
     #
     # + subscriptionId - Subscription ID
-    # + subRecord - Subscription record
+    # + subscription - PASSubscription resource
     # + return - True if successful
     private function sendHandshake(
-        string subscriptionId,
-        models:SubscriptionRecord subRecord
+            string subscriptionId,
+            davincipas:PASSubscription subscription
     ) returns boolean|error {
 
-        log:printInfo(string `Sending handshake to ${subRecord.endpoint}`);
+        string endpoint = subscription.channel.endpoint ?: "";
+        if endpoint == "" {
+            return error("Subscription endpoint is empty");
+        }
+
+        log:printInfo(string `Sending handshake to ${endpoint}`);
 
         // Build handshake bundle
         models:NotificationBundle bundle = {
@@ -210,7 +123,7 @@ public class SubscriptionService {
         };
 
         // Send HTTP POST
-        http:Client httpClient = check new (subRecord.endpoint, {
+        http:Client httpClient = check new (endpoint, {
             timeout: 10
         });
 
@@ -218,9 +131,10 @@ public class SubscriptionService {
             "Content-Type": "application/fhir+json"
         };
 
-        if subRecord.auth_header is string {
-            string authValue = (<string>subRecord.auth_header).substring(15);
-            headers["Authorization"] = authValue;
+        // Extract auth header from channel headers
+        string? authHeader = utils:extractAuthHeader(subscription);
+        if authHeader is string {
+            headers["Authorization"] = authHeader;
         }
 
         http:Response|error response = httpClient->post("/", bundle, headers);

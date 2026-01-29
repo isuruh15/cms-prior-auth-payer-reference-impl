@@ -21,7 +21,10 @@ public isolated function getFhirConnectorConfig() returns fhirClient:FHIRConnect
             tokenUrl: tokenUrl,
             clientId: clientId,
             clientSecret: clientSecret,
-            scopes: scopes
+            scopes: scopes,
+            optionalParams: {
+                "resource": baseUrl
+            }
         }
     };
 }

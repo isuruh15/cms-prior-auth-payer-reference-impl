@@ -1,13 +1,17 @@
 // modules/services/notification_service.bal
 
+import ballerina/http;
 import ballerina/log;
 import ballerina/time;
-import ballerina/http;
+import ballerinax/health.fhir.r4.davincipas;
+import ballerinax/health.fhir.r4.international401;
+
 import wso2/pas_payer_backend.models;
 import wso2/pas_payer_backend.repository;
+import wso2/pas_payer_backend.utils;
 
 # Notification Service
-public class NotificationService {
+public isolated class NotificationService {
     private final repository:SubscriptionRepository subscriptionRepo;
 
     public function init(repository:SubscriptionRepository subscriptionRepo) {
@@ -20,16 +24,16 @@ public class NotificationService {
     # + organizationId - Organization ID
     # + claimResponse - Updated ClaimResponse
     # + return - Error if sending fails
-    public function sendNotifications(
-        string claimResponseId,
-        string organizationId,
-        models:ClaimResponse claimResponse
+    public isolated function sendNotifications(
+            string claimResponseId,
+            string organizationId,
+            international401:ClaimResponse claimResponse
     ) returns error? {
-        
+
         log:printInfo(string `Sending notifications for ClaimResponse ${claimResponseId}`);
 
         // Get active subscriptions
-        models:SubscriptionRecord[] subscriptions = 
+        davincipas:PASSubscription[] subscriptions =
             check self.subscriptionRepo.getActiveSubscriptionsByOrg(organizationId);
 
         if subscriptions.length() == 0 {
@@ -38,26 +42,32 @@ public class NotificationService {
         }
 
         // Send notification to each subscription
-        foreach models:SubscriptionRecord sub in subscriptions {
+        foreach davincipas:PASSubscription sub in subscriptions {
             error? result = self.sendNotification(sub, claimResponseId, claimResponse);
             if result is error {
-                log:printError(string `Failed to send notification to ${sub.id}: ${result.message()}`);
+                log:printError(string `Failed to send notification to ${sub.id ?: "unknown"}: ${result.message()}`);
             }
         }
     }
 
     # Send notification to single subscription
     #
-    # + subscription - Subscription record
+    # + subscription - PASSubscription resource
     # + claimResponseId - ClaimResponse ID
     # + claimResponse - ClaimResponse resource
     # + return - Error if sending fails
-    private function sendNotification(
-        models:SubscriptionRecord subscription,
-        string claimResponseId,
-        models:ClaimResponse claimResponse
+    private isolated function sendNotification(
+            davincipas:PASSubscription subscription,
+            string claimResponseId,
+            international401:ClaimResponse claimResponse
     ) returns error? {
-        
+
+        // Get endpoint from channel
+        string endpoint = subscription.channel.endpoint ?: "";
+        if endpoint == "" {
+            return error("Subscription endpoint is empty");
+        }
+
         // Build notification bundle
         models:NotificationBundle bundle = check self.buildNotificationBundle(
             subscription,
@@ -66,7 +76,7 @@ public class NotificationService {
         );
 
         // Send HTTP POST
-        http:Client httpClient = check new (subscription.endpoint, {
+        http:Client httpClient = check new (endpoint, {
             timeout: 30,
             retryConfig: {
                 count: 3,
@@ -78,16 +88,17 @@ public class NotificationService {
             "Content-Type": "application/fhir+json"
         };
 
-        if subscription.auth_header is string {
-            string authValue = (<string>subscription.auth_header).substring(15);
-            headers["Authorization"] = authValue;
+        // Extract auth header from channel headers
+        string? authHeader = utils:extractAuthHeader(subscription);
+        if authHeader is string {
+            headers["Authorization"] = authHeader;
         }
 
         http:Response|error response = httpClient->post("/", bundle, headers);
 
         if response is http:Response {
             if response.statusCode >= 200 && response.statusCode < 300 {
-                log:printInfo(string `Notification sent successfully to ${subscription.endpoint}`);
+                log:printInfo(string `Notification sent successfully to ${endpoint}`);
                 return;
             } else {
                 return error(string `HTTP ${response.statusCode}`);
@@ -99,16 +110,17 @@ public class NotificationService {
 
     # Build notification bundle
     #
-    # + subscription - Subscription record
+    # + subscription - PASSubscription resource
     # + claimResponseId - ClaimResponse ID
     # + claimResponse - ClaimResponse resource
     # + return - Notification bundle
-    private function buildNotificationBundle(
-        models:SubscriptionRecord subscription,
-        string claimResponseId,
-        models:ClaimResponse claimResponse
+    private isolated function buildNotificationBundle(
+            davincipas:PASSubscription subscription,
+            string claimResponseId,
+            international401:ClaimResponse claimResponse
     ) returns models:NotificationBundle|error {
-        
+
+        string subscriptionId = subscription.id ?: "";
         string bundleId = string `notification-${time:utcNow()[0]}`;
         string statusId = string `status-${time:utcNow()[0]}`;
 
@@ -120,7 +132,7 @@ public class NotificationService {
                 {
                     name: "subscription",
                     valueReference: {
-                        reference: string `Subscription/${subscription.id}`
+                        reference: string `Subscription/${subscriptionId}`
                     }
                 },
                 {
@@ -163,7 +175,7 @@ public class NotificationService {
                 'resource: statusParams.toJson(),
                 request: {
                     method: "GET",
-                    url: string `Subscription/${subscription.id}/$status`
+                    url: string `Subscription/${subscriptionId}/$status`
                 },
                 response: {
                     status: "200"
@@ -172,7 +184,8 @@ public class NotificationService {
         ];
 
         // Add ClaimResponse if full-resource payload
-        if subscription.payload_type == "full-resource" {
+        string payloadType = utils:extractPayloadType(subscription);
+        if payloadType == "full-resource" {
             entries.push({
                 fullUrl: string `ClaimResponse/${claimResponseId}`,
                 'resource: claimResponse.toJson(),

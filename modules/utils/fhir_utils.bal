@@ -1,7 +1,9 @@
 // modules/utils/fhir_utils.bal
 
-import wso2/pas_payer_backend.models;
 import ballerinax/health.fhir.r4;
+import ballerinax/health.fhir.r4.davincipas;
+
+import wso2/pas_payer_backend.models;
 
 # Extract NPIs from Claim resource
 #
@@ -40,9 +42,9 @@ public function extractNPIsFromClaim(models:Claim claim) returns string[] {
 # + diagnostics - Diagnostic message
 # + return - OperationOutcome
 public function createOperationOutcome(
-    string severity,
-    string code,
-    string diagnostics
+        string severity,
+        string code,
+        string diagnostics
 ) returns r4:OperationOutcome {
     return {
         resourceType: "OperationOutcome",
@@ -64,9 +66,77 @@ public function createOperationOutcome(
 public function isValidStatusTransition(string oldStatus, string newStatus) returns boolean {
     // Pended to complete/partial is valid
     if (oldStatus == "pended" || oldStatus == "queued") &&
-       (newStatus == "complete" || newStatus == "partial") {
+        (newStatus == "complete" || newStatus == "partial") {
         return true;
     }
 
     return false;
+}
+
+# Extract authorization header from PASSubscription channel headers
+#
+# + subscription - PASSubscription resource
+# + return - Authorization header value or nil
+public isolated function extractAuthHeader(davincipas:PASSubscription subscription) returns string? {
+    string[]? headers = subscription.channel.header;
+    if headers is string[] {
+        foreach string header in headers {
+            if header.startsWith("Authorization:") {
+                return header.substring(14).trim();
+            }
+        }
+    }
+    return ();
+}
+
+# Extract payload type from PASSubscription channel extensions
+#
+# + subscription - PASSubscription resource
+# + return - Payload type (defaults to "full-resource")
+public isolated function extractPayloadType(davincipas:PASSubscription subscription) returns string {
+    r4:Extension[]? extensions = subscription.channel.extension;
+    if extensions is r4:Extension[] {
+        foreach r4:Extension ext in extensions {
+            if ext.url.endsWith("backport-payload-content") {
+                if ext is r4:CodeExtension {
+                    r4:code? code = ext.valueCode;
+                    if code is r4:code {
+                        return code;
+                    }
+                }
+            }
+        }
+    }
+    return "full-resource";
+}
+
+# Extract organization ID from PASSubscription extensions
+#
+# + subscription - PASSubscription resource
+# + return - Organization ID or error
+public isolated function extractOrganizationId(davincipas:PASSubscription subscription) returns string|error {
+    // First check main extensions for organization-identifier
+    r4:Extension[]? extensions = subscription.extension;
+    if extensions is r4:Extension[] {
+        foreach r4:Extension ext in extensions {
+            if ext.url.endsWith("organization-identifier") && ext is r4:StringExtension {
+                string? valueStr = ext.valueString;
+                if valueStr is string {
+                    return valueStr;
+                }
+            }
+            // Also check for backport-filter-criteria extension
+            if ext.url.endsWith("backport-filter-criteria") && ext is r4:StringExtension {
+                string? valueStr = ext.valueString;
+                if valueStr is string {
+                    // Parse "org-identifier=1234567890" or "ClaimResponse?insurer:identifier=1234567890"
+                    int? eqIndex = valueStr.indexOf("=");
+                    if eqIndex is int {
+                        return valueStr.substring(eqIndex + 1);
+                    }
+                }
+            }
+        }
+    }
+    return error("Organization ID not found in subscription extensions");
 }

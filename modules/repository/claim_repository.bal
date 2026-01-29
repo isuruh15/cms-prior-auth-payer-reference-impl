@@ -3,6 +3,7 @@
 
 import ballerina/log;
 import ballerinax/health.clients.fhir as fhirClient;
+
 import wso2/pas_payer_backend.models;
 
 # Claim Repository for Azure FHIR Server operations
@@ -26,12 +27,12 @@ public isolated class ClaimRepository {
     # + payload - Full ClaimResponse JSON
     # + return - Error if operation fails
     public isolated function storeClaimResponse(
-        string claimId,
-        string claimResponseId,
-        string organizationId,
-        string patientMemberId,
-        string status,
-        json payload
+            string claimId,
+            string claimResponseId,
+            string organizationId,
+            string patientMemberId,
+            string status,
+            json payload
     ) returns error? {
 
         // Add organization identifier extension for filtering
@@ -42,8 +43,8 @@ public isolated class ClaimRepository {
         map<string[]> condition = {"_id": [claimResponseId]};
 
         fhirClient:FHIRResponse|fhirClient:FHIRError response = self.fhirConnector->create(
-            claimResponseWithMeta,
-            onCondition = condition
+            claimResponseWithMeta
+        // onCondition = condition
         );
 
         if response is fhirClient:FHIRError {
@@ -61,9 +62,9 @@ public isolated class ClaimRepository {
     # + payload - Updated ClaimResponse JSON
     # + return - Organization ID for correlation or error
     public isolated function updateClaimResponse(
-        string claimResponseId,
-        string newStatus,
-        json payload
+            string claimResponseId,
+            string newStatus,
+            json payload
     ) returns string|error {
 
         // First, get existing ClaimResponse to retrieve organization ID

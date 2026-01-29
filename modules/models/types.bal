@@ -4,6 +4,7 @@
 import ballerina/time;
 import ballerinax/health.fhir.r4;
 import ballerinax/health.fhir.r4.international401;
+import ballerinax/health.fhir.r4.davincipas;
 
 // ============================================================================
 // Re-exported FHIR Resource Types from international401
@@ -15,11 +16,30 @@ public type Claim international401:Claim;
 # FHIR ClaimResponse resource type
 public type ClaimResponse international401:ClaimResponse;
 
-# FHIR Subscription resource type
+# FHIR Subscription resource type (deprecated - use PASSubscription)
 public type Subscription international401:Subscription;
 
-# FHIR SubscriptionChannel type
+# FHIR SubscriptionChannel type (deprecated - use PASSubscriptionChannel)
 public type SubscriptionChannel international401:SubscriptionChannel;
+
+// ============================================================================
+// Re-exported FHIR Resource Types from davincipas (PAS Profile)
+// ============================================================================
+
+# FHIR PASSubscription resource type for Da Vinci PAS
+public type PASSubscription davincipas:PASSubscription;
+
+# FHIR PASSubscriptionChannel type for Da Vinci PAS
+public type PASSubscriptionChannel davincipas:PASSubscriptionChannel;
+
+# PASSubscription status enum
+public type PASSubscriptionStatus davincipas:PASSubscriptionStatus;
+
+# PASSubscription channel type enum
+public type PASSubscriptionChannelType davincipas:PASSubscriptionChannelType;
+
+# PASSubscription channel payload enum
+public type PASSubscriptionChannelPayload davincipas:PASSubscriptionChannelPayload;
 
 // ============================================================================
 // Re-exported FHIR Base Types from r4

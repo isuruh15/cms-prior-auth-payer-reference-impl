@@ -1,0 +1,153 @@
+{
+  "info": {
+    "_postman_id": "a1ddd637-2954-4a6c-b426-27752cf756e9",
+    "name": "FHIR Subscription",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "_exporter_id": "34283119"
+  },
+  "item": [
+    {
+      "name": "healthcheck",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "http://localhost:9090/fhir/health",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "9090",
+          "path": [
+            "fhir",
+            "health"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "submit-PA",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/fhir+json"
+          },
+          {
+            "key": "Accept",
+            "value": "application/fhir+json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n    \"resourceType\": \"Bundle\",\n    \"type\": \"collection\",\n    \"entry\": [\n      {\n        \"fullUrl\": \"urn:uuid:claim-001\",\n        \"resource\": {\n          \"resourceType\": \"Claim\",\n          \"id\": \"claim-001\",\n          \"status\": \"active\",\n          \"type\": {\n            \"coding\": [\n              {\n                \"system\": \"http://terminology.hl7.org/CodeSystem/claim-type\",\n                \"code\": \"professional\"\n              }\n            ]\n          },\n          \"use\": \"preauthorization\",\n          \"patient\": {\n            \"reference\": \"Patient/patient-001\"\n          },\n          \"created\": \"2026-01-27T10:00:00Z\",\n          \"provider\": {\n            \"identifier\": {\n              \"system\": \"http://hl7.org/fhir/sid/us-npi\",\n              \"value\": \"1234567890\"\n            }\n          },\n          \"priority\": {\n            \"coding\": [\n              {\n                \"system\": \"http://terminology.hl7.org/CodeSystem/processpriority\",\n                \"code\": \"normal\"\n              }\n            ]\n          },\n          \"careTeam\": [\n            {\n              \"sequence\": 1,\n              \"provider\": {\n                \"identifier\": {\n                  \"system\": \"http://hl7.org/fhir/sid/us-npi\",\n                  \"value\": \"2222222222\"\n                }\n              },\n              \"role\": {\n                \"coding\": [\n                  {\n                    \"code\": \"primary\"\n                  }\n                ]\n              }\n            }\n          ],\n          \"item\": [\n            {\n              \"sequence\": 1,\n              \"productOrService\": {\n                \"coding\": [\n                  {\n                    \"system\": \"http://www.ama-assn.org/go/cpt\",\n                    \"code\": \"99213\",\n                    \"display\": \"Office visit\"\n                  }\n                ]\n              },\n              \"quantity\": {\n                \"value\": 1,\n                \"unit\": \"visit\"\n              }\n            }\n          ]\n        }\n      }\n    ]\n  }",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "http://localhost:9091/fhir/r4/Claim/$submit",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "9091",
+          "path": [
+            "fhir",
+            "r4",
+            "Claim",
+            "$submit"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "create-subscription",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/fhir+json"
+          },
+          {
+            "key": "Accept",
+            "value": "application/fhir+json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"resourceType\": \"Subscription\",\n  \"id\": \"PASSubscriptionExample\",\n  \"meta\": {\n    \"profile\": [\n      \"http://hl7.org/fhir/us/davinci-pas/StructureDefinition/profile-subscription\"\n    ]\n  },\n  \"status\": \"requested\",\n  \"reason\": \"Monitor PA updates for Memorial Hospital\",\n  \"criteria\": \"http://hl7.org/fhir/us/davinci-pas/SubscriptionTopic/PASSubscriptionTopic\",\n  \"channel\": {\n    \"extension\": [\n      {\n        \"url\": \"http://hl7.org/fhir/uv/subscriptions-backport/StructureDefinition/backport-heartbeat-period\",\n        \"valueUnsignedInt\": 86400\n      },\n      {\n        \"url\": \"http://hl7.org/fhir/uv/subscriptions-backport/StructureDefinition/backport-timeout\",\n        \"valueUnsignedInt\": 60\n      },\n      {\n        \"url\": \"http://hl7.org/fhir/uv/subscriptions-backport/StructureDefinition/backport-max-count\",\n        \"valuePositiveInt\": 20\n      }\n    ],\n    \"type\" : \"rest-hook\",\n    \"endpoint\": \"http://localhost:8080\",\n    \"payload\" : \"extension\",\n    \"_payload\": {\n      \"extension\": [\n        {\n          \"url\": \"http://hl7.org/fhir/uv/subscriptions-backport/StructureDefinition/backport-payload-content\",\n          \"valueCode\": \"full-resource\"\n        }\n      ]\n    },\n    \"header\": [\n      \"Authorization: Bearer your-secret-token\"\n    ]\n  },\n  \"_criteria\": {\n    \"extension\": [\n      {\n        \"url\": \"http://hl7.org/fhir/uv/subscriptions-backport/StructureDefinition/backport-filter-criteria\",\n        \"valueString\": \"org-identifier=1234567890\"\n      }\n    ]\n  }\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "http://localhost:9093/fhir/r4/Subscription",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "9093",
+          "path": [
+            "fhir",
+            "r4",
+            "Subscription"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "approve-PA",
+      "request": {
+        "method": "PUT",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/fhir+json"
+          },
+          {
+            "key": "Accept",
+            "value": "application/fhir+json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n    \"resourceType\": \"ClaimResponse\",\n    \"id\": \"cr-xxxxx\",\n    \"status\": \"active\",\n    \"type\": {\n      \"coding\": [\n        {\n          \"system\": \"http://terminology.hl7.org/CodeSystem/claim-type\",\n          \"code\": \"professional\"\n        }\n      ]\n    },\n    \"use\": \"preauthorization\",\n    \"patient\": {\n      \"reference\": \"Patient/patient-001\"\n    },\n    \"created\": \"2026-01-27T10:00:00Z\",\n    \"insurer\": {\n      \"reference\": \"Organization/payer-001\"\n    },\n    \"request\": {\n      \"reference\": \"Claim/claim-001\"\n    },\n    \"outcome\": \"complete\",\n    \"disposition\": \"Prior authorization approved\",\n    \"preAuthRef\": \"PA-1738056000\",\n    \"item\": [\n      {\n        \"itemSequence\": 1,\n        \"adjudication\": [\n          {\n            \"category\": {\n              \"coding\": [\n                {\n                  \"system\": \"http://terminology.hl7.org/CodeSystem/adjudication\",\n                  \"code\": \"submitted\"\n                }\n              ]\n            },\n            \"extension\": [\n              {\n                \"url\": \"http://hl7.org/fhir/us/davinci-pas/StructureDefinition/extension-reviewAction\",\n                \"extension\": [\n                  {\n                    \"url\": \"code\",\n                    \"valueCodeableConcept\": {\n                      \"coding\": [\n                        {\n                          \"system\": \"https://codesystem.x12.org/005010/306\",\n                          \"code\": \"A1\",\n                          \"display\": \"Certified in total\"\n                        }\n                      ]\n                    }\n                  }\n                ]\n              }\n            ]\n          }\n        ]\n      }\n    ]\n  }",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "http://localhost:9090/fhir/ClaimResponse/cr-xxxxx",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "9090",
+          "path": [
+            "fhir",
+            "ClaimResponse",
+            "cr-xxxxx"
+          ]
+        }
+      },
+      "response": []
+    }
+  ]
+}

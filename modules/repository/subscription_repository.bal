@@ -3,7 +3,8 @@
 
 import ballerina/log;
 import ballerinax/health.clients.fhir as fhirClient;
-import wso2/pas_payer_backend.models;
+import ballerinax/health.fhir.r4;
+import ballerinax/health.fhir.r4.davincipas;
 
 # Subscription Repository for Azure FHIR Server operations
 public isolated class SubscriptionRepository {
@@ -18,37 +19,33 @@ public isolated class SubscriptionRepository {
 
     # Create subscription in Azure FHIR Server
     #
-    # + subscription - Subscription record to create
+    # + subscription - PASSubscription resource to create
     # + return - Created subscription ID or error
-    public isolated function createSubscription(models:SubscriptionRecord subscription)
+    public isolated function createSubscription(davincipas:PASSubscription subscription)
             returns string|error {
 
-        // Build FHIR Subscription resource
-        json fhirSubscription = self.toFhirSubscription(subscription);
-
-        // Create in Azure FHIR using conditional create
-        map<string[]> condition = {"_id": [subscription.id]};
+        // Convert to JSON for FHIR connector
+        json fhirSubscription = subscription.toJson();
 
         fhirClient:FHIRResponse|fhirClient:FHIRError response = self.fhirConnector->create(
-            fhirSubscription,
-            onCondition = condition
+            fhirSubscription
         );
 
         if response is fhirClient:FHIRError {
-            log:printError(string `Failed to create subscription ${subscription.id}: ${response.message()}`);
+            log:printError(string `Failed to create subscription ${subscription.id ?: "unknown"}: ${response.message()}`);
             return error(string `Failed to create subscription: ${response.message()}`);
         }
 
-        log:printInfo(string `Created subscription ${subscription.id} in Azure FHIR`);
-        return subscription.id;
+        log:printInfo(string `Created subscription ${subscription.id ?: "unknown"} in Azure FHIR`);
+        return subscription.id ?: "";
     }
 
     # Get subscription by ID from Azure FHIR Server
     #
     # + id - Subscription ID
-    # + return - Subscription record or error
+    # + return - PASSubscription resource or error
     public isolated function getSubscription(string id)
-            returns models:SubscriptionRecord|error {
+            returns davincipas:PASSubscription|error {
 
         fhirClient:FHIRResponse|fhirClient:FHIRError response = self.fhirConnector->getById("Subscription", id);
 
@@ -56,15 +53,15 @@ public isolated class SubscriptionRepository {
             return error(string `Subscription ${id} not found: ${response.message()}`);
         }
 
-        return self.toSubscriptionRecord(<json>response.'resource);
+        return self.toPASSubscription(<json>response.'resource);
     }
 
     # Get active subscriptions by organization ID from Azure FHIR Server
     #
     # + organizationId - Organization NPI
-    # + return - Array of subscription records or error
+    # + return - Array of PASSubscription resources or error
     public isolated function getActiveSubscriptionsByOrg(string organizationId)
-            returns models:SubscriptionRecord[]|error {
+            returns davincipas:PASSubscription[]|error {
 
         // Search for active subscriptions with organization filter
         map<string[]> searchParams = {
@@ -158,130 +155,97 @@ public isolated class SubscriptionRepository {
         return false;
     }
 
-    # Convert internal SubscriptionRecord to FHIR Subscription resource
-    private isolated function toFhirSubscription(models:SubscriptionRecord subscription) returns json {
-        // Build headers array
-        json[] headers = [];
-        if subscription.auth_header is string {
-            headers.push(string `Authorization: ${<string>subscription.auth_header}`);
-        }
-
-        // Build filter criteria extension (R4 Backport)
-        json criteriaExtension = {
-            "url": "http://hl7.org/fhir/uv/subscriptions-backport/StructureDefinition/backport-filter-criteria",
-            "valueString": string `ClaimResponse?insurer:identifier=${subscription.organization_id}`
-        };
-
-        // Build payload content extension (R4 Backport)
-        json payloadExtension = {
-            "url": "http://hl7.org/fhir/uv/subscriptions-backport/StructureDefinition/backport-payload-content",
-            "valueCode": subscription.payload_type
-        };
-
-        json fhirSubscription = {
-            "resourceType": "Subscription",
-            "id": subscription.id,
-            "status": subscription.status,
-            "reason": "ClaimResponse status change notifications",
-            "criteria": "ClaimResponse?outcome:not=queued",
-            "_criteria": [criteriaExtension],
-            "channel": {
-                "type": "rest-hook",
-                "endpoint": subscription.endpoint,
-                "payload": "application/fhir+json",
-                "_payload": [payloadExtension],
-                "header": headers
-            },
-            "extension": [
-                {
-                    "url": "http://example.org/fhir/StructureDefinition/organization-identifier",
-                    "valueString": subscription.organization_id
-                },
-                {
-                    "url": "http://example.org/fhir/StructureDefinition/failure-count",
-                    "valueInteger": subscription.failure_count
-                }
-            ]
-        };
-
-        return fhirSubscription;
-    }
-
-    # Convert FHIR Subscription resource to internal SubscriptionRecord
-    private isolated function toSubscriptionRecord(json fhirResource) returns models:SubscriptionRecord|error {
+    # Convert FHIR JSON resource to PASSubscription
+    private isolated function toPASSubscription(json fhirResource) returns davincipas:PASSubscription|error {
         string id = check fhirResource.id.ensureType();
-        string status = check fhirResource.status.ensureType();
+        string statusStr = check fhirResource.status.ensureType();
+        string reason = "";
+        string criteria = "";
 
-        // Extract endpoint from channel
-        string endpoint = "";
-        json|error channel = fhirResource.channel;
-        if channel is json {
-            json|error ep = channel.endpoint;
-            if ep is string {
-                endpoint = ep;
-            }
+        json|error reasonJson = fhirResource.reason;
+        if reasonJson is string {
+            reason = reasonJson;
         }
 
-        // Extract auth header from channel headers
-        string? authHeader = ();
-        if channel is json {
-            json|error headers = channel.header;
-            if headers is json[] {
-                foreach json header in headers {
-                    if header is string && header.startsWith("Authorization:") {
-                        authHeader = header.substring(15).trim();
-                        break;
-                    }
-                }
-            }
+        json|error criteriaJson = fhirResource.criteria;
+        if criteriaJson is string {
+            criteria = criteriaJson;
         }
 
-        // Extract payload type from extension
-        string payloadType = "full-resource";
-        if channel is json {
-            json|error payloadExt = channel._payload;
-            if payloadExt is json[] {
-                foreach json ext in payloadExt {
-                    json|error url = ext.url;
-                    if url is string && url.endsWith("backport-payload-content") {
-                        json|error code = ext.valueCode;
-                        if code is string {
-                            payloadType = code;
-                        }
-                    }
-                }
-            }
-        }
-
-        // Extract organization ID from extension
-        string organizationId = check self.extractOrganizationFromSubscription(fhirResource);
-
-        // Extract failure count from extension
-        int failureCount = 0;
-        json|error extensions = fhirResource.extension;
-        if extensions is json[] {
-            foreach json ext in extensions {
-                json|error url = ext.url;
-                if url is string && url.endsWith("failure-count") {
-                    json|error count = ext.valueInteger;
-                    if count is int {
-                        failureCount = count;
-                    }
-                }
-            }
-        }
-
-        return {
-            id: id,
-            organization_id: organizationId,
-            status: status,
-            endpoint: endpoint,
-            auth_header: authHeader,
-            payload_type: payloadType,
-            created_at: [0, 0],
-            end_datetime: (),
-            failure_count: failureCount
+        // Extract channel
+        davincipas:PASSubscriptionChannel channel = {
+            'type: davincipas:CODE_TYPE_REST_HOOK
         };
+
+        json|error channelJson = fhirResource.channel;
+        if channelJson is json {
+            json|error ep = channelJson.endpoint;
+            if ep is string {
+                channel.endpoint = ep;
+            }
+
+            json|error channelType = channelJson.'type;
+            if channelType is string {
+                channel.'type = <davincipas:PASSubscriptionChannelType>channelType;
+            }
+
+            json|error payloadJson = channelJson.payload;
+            if payloadJson is string {
+                channel.payload = <davincipas:PASSubscriptionChannelPayload>payloadJson;
+            }
+
+            json|error headers = channelJson.header;
+            if headers is json[] {
+                string[] headerArr = [];
+                foreach json header in headers {
+                    if header is string {
+                        headerArr.push(header);
+                    }
+                }
+                channel.header = headerArr;
+            }
+        }
+
+        // Extract extensions
+        r4:Extension[] extensions = [];
+        json|error extJson = fhirResource.extension;
+        if extJson is json[] {
+            foreach json ext in extJson {
+                json|error url = ext.url;
+                json|error valueString = ext.valueString;
+                json|error valueInteger = ext.valueInteger;
+
+                string extUrl = url is string ? url : "";
+
+                if valueString is string {
+                    r4:StringExtension strExt = {
+                        url: extUrl,
+                        valueString: valueString
+                    };
+                    extensions.push(strExt);
+                } else if valueInteger is int {
+                    r4:IntegerExtension intExt = {
+                        url: extUrl,
+                        valueInteger: valueInteger
+                    };
+                    extensions.push(intExt);
+                }
+            }
+        }
+
+        davincipas:PASSubscription subscription = {
+            id: id,
+            status: <davincipas:PASSubscriptionStatus>statusStr,
+            reason: reason,
+            criteria: criteria,
+            channel: channel
+        };
+
+        if extensions.length() > 0 {
+            subscription.extension = extensions;
+        }
+
+        return subscription;
     }
 
     # Extract organization ID from Subscription resource
@@ -323,9 +287,9 @@ public isolated class SubscriptionRepository {
 
     # Extract subscriptions from FHIR Bundle with organization filter
     private isolated function extractSubscriptionsFromBundle(json bundle, string organizationId)
-            returns models:SubscriptionRecord[]|error {
+            returns davincipas:PASSubscription[]|error {
 
-        models:SubscriptionRecord[] subscriptions = [];
+        davincipas:PASSubscription[] subscriptions = [];
         json|error entries = bundle.entry;
 
         if entries is json[] {
@@ -335,8 +299,8 @@ public isolated class SubscriptionRepository {
                     // Extract organization and filter
                     string|error orgId = self.extractOrganizationFromSubscription('resource);
                     if orgId is string && orgId == organizationId {
-                        models:SubscriptionRecord|error sub = self.toSubscriptionRecord('resource);
-                        if sub is models:SubscriptionRecord {
+                        davincipas:PASSubscription|error sub = self.toPASSubscription('resource);
+                        if sub is davincipas:PASSubscription {
                             subscriptions.push(sub);
                         }
                     }

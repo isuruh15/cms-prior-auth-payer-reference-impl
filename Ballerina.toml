@@ -21,3 +21,9 @@ observabilityIncluded = true
 # org = "ballerinax"
 # name = "health.clients.fhir"
 # version = "1.1.0"
+
+[[dependency]]
+org = "ballerinax"
+name = "health.fhirr4"
+version = "3.0.3"
+repository="local"
